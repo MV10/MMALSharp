@@ -13,11 +13,13 @@ namespace MMALSharp.Processors.Effects
     /// <summary>
     /// An effects processor which invokes a delegate to parallel-process each pixel in the image.
     /// </summary>
-    /// <typeparam name="TMetaData">Thread-safe metadata to pass to the delegate derived from <see cref="PixelProcessorMetadata"/></typeparam>
-    public class CustomPixelProcessor<TMetaData> : ParallelCellProcessorBase, IFrameProcessor
-        where TMetaData : struct, IPixelProcessorMetadata
+    /// <typeparam name="T">Thread-safe metadata to pass to the delegate derived from <see cref="PixelProcessorMetadata"/></typeparam>
+    public class CustomPixelProcessor<T> : ParallelCellProcessorBase, IFrameProcessor
+        where T : struct, IPixelProcessorMetadata
     {
-        private readonly Func<TMetaData, (int r, int g, int b)> _pixelFunction;
+        private readonly Func<T, (int r, int g, int b)> _pixelFunction;
+
+        private T _customMetadata;
 
         /// <summary>
         /// This constructor uses the default parallel processing cell count based on the image
@@ -25,49 +27,45 @@ namespace MMALSharp.Processors.Effects
         /// Requires use of one of the standard camera image resolutions.
         /// </summary>
         /// <param name="pixelFunction">The delegate to process each pixel's data. The return value is an (r,g,b) tuple.</param>
-        public CustomPixelProcessor(Func<TMetaData, (int r, int g, int b)> pixelFunction)
+        /// <param name="customMetadata">Additional metadata passed to the effect processor delegate.</param>
+        public CustomPixelProcessor(Func<T, (int r, int g, int b)> pixelFunction, T customMetadata = default)
             : base()
         {
             _pixelFunction = pixelFunction;
+            _customMetadata = customMetadata;
         }
 
         /// <summary>
         /// This constructor accepts custom parallel processing cell counts. You must use this
         /// constructor if you are processing non-standard image resolutions.
         /// </summary>
-        /// <param name="pixelFunction">The delegate to process each pixel's data. The return value is an (r,g,b) tuple.</param>
         /// <param name="horizontalCellCount">The number of columns to divide the image into.</param>
         /// <param name="verticalCellCount">The number of rows to divide the image into.</param>
-        public CustomPixelProcessor(Func<TMetaData, (int r, int g, int b)> pixelFunction, int horizontalCellCount, int verticalCellCount)
+        /// <param name="pixelFunction">The delegate to process each pixel's data. The return value is an (r,g,b) tuple.</param>
+        /// <param name="customMetadata">Additional metadata passed to the effect processor delegate.</param>
+        public CustomPixelProcessor(int horizontalCellCount, int verticalCellCount, Func<T, (int r, int g, int b)> pixelFunction, T customMetadata = default)
             : base(horizontalCellCount, verticalCellCount)
         {
             _pixelFunction = pixelFunction;
+            _customMetadata = customMetadata;
         }
 
         // TODO fix the base summary text (references convolutions)
         /// <inheritdoc />
         public void Apply(ImageContext context)
-            => Apply(context, default);
-
-        /// <summary>
-        /// Applies the effect to the image.
-        /// </summary>
-        /// <param name="context">The image's metadata.</param>
-        /// <param name="customMetadata">Custom data to be passed to the processing delegate.</param>
-        public void Apply(ImageContext context, TMetaData customMetadata)
         {
             PrepareProcessingContext(context);
 
-            customMetadata.Width = this.FrameMetadata.Width;
-            customMetadata.Height = this.FrameMetadata.Height;
+            _customMetadata.Width = this.FrameMetadata.Width;
+            _customMetadata.Height = this.FrameMetadata.Height;
 
             Parallel.ForEach(this.CellRect, (cell)
-                => ProcessCell(cell, this.ProcessingContext.Data, this.FrameMetadata, customMetadata, this.SwapRawRGBtoBGR, this.RedOffset, this.BlueOffset));
+                => ProcessCell(cell, this.ProcessingContext.Data, this.FrameMetadata, _customMetadata, this.SwapRawRGBtoBGR, this.RedOffset, this.BlueOffset));
 
             PostProcessContext();
         }
 
-        private void ProcessCell(Rectangle rect, byte[] image, FrameAnalysisMetadata frameMetadata, TMetaData pixelMetadata, bool swapRedBlue, int redOffset, int blueOffset)
+        private void ProcessCell(Rectangle rect, byte[] image, FrameAnalysisMetadata frameMetadata, T pixelMetadata, bool swapRedBlue, int redOffset, int blueOffset)
         {
             // Rectangle and FrameAnalysisMetadata are structures; they are by-value copies and all fields are value-types which makes them thread safe
 
@@ -84,6 +82,9 @@ namespace MMALSharp.Processors.Effects
                 for (var y = rect.Y; y < y2; y++)
                 {
                     index = (x * frameMetadata.Bpp) + (y * frameMetadata.Stride);
+
+                    pixelMetadata.X = x;
+                    pixelMetadata.Y = y;
 
                     pixelMetadata.R = image[index + redOffset];
                     pixelMetadata.G = image[index + 1];
